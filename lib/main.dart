@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'database/database_helper.dart';
 
 void main() {
   runApp(const ExpenseManagerApp());
 }
+
 
 
 class ExpenseManagerApp extends StatelessWidget {
@@ -46,7 +48,66 @@ class TransactionData {
     required this.icon,
     required this.color,
   });
+
+  Map<String, Object?> toMap() {
+    return {
+      'title': title,
+      'category': category,
+      'date': date.toIso8601String(),
+      'amount': amount,
+      'type': type,
+    };
+  }
+
+  // Đọc dữ liệu từ SQLite thành TransactionData
+  factory TransactionData.fromMap(Map<String, Object?> map) {
+    final category = map['category'] as String;
+    final type = map['type'] as String;
+
+    IconData icon = Icons.receipt_long;
+    Color color = const Color(0xFF607D8B);
+
+    if (type == 'income') {
+      icon = Icons.attach_money;
+      color = const Color(0xFF2EAD4B);
+    } else {
+      switch (category) {
+        case 'Ăn uống':
+          icon = Icons.restaurant;
+          color = const Color(0xFFFF6D00);
+          break;
+        case 'Di chuyển':
+          icon = Icons.directions_car;
+          color = const Color(0xFF2196F3);
+          break;
+        case 'Mua sắm':
+          icon = Icons.shopping_cart;
+          color = const Color(0xFF9C27B0);
+          break;
+        case 'Giáo dục':
+          icon = Icons.school;
+          color = const Color(0xFF009688);
+          break;
+        case 'Giải trí':
+          icon = Icons.sports_esports;
+          color = const Color(0xFFE91E63);
+          break;
+      }
+    }
+
+    return TransactionData(
+      id: map['id'] as int,
+      title: map['title'] as String,
+      category: category,
+      date: DateTime.parse(map['date'] as String),
+      amount: (map['amount'] as num).toDouble(),
+      type: type,
+      icon: icon,
+      color: color,
+    );
+  }
 }
+
 
 // =====================================================
 // BUỔI 2 - WELCOME
@@ -151,64 +212,28 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int currentIndex = 0;
 
+  List<TransactionData> transactions = [];
 
-  final List<TransactionData> transactions = [
-    TransactionData(
-      id: 1,
-      title: 'Ăn trưa',
-      category: 'Ăn uống',
-      date: DateTime(2024, 9, 3),
-      amount: 50000,
-      type: 'expense',
-      icon: Icons.restaurant,
-      color: const Color(0xFFFF6D00),
-    ),
+  // Tự động đọc dữ liệu khi mở HomePage
+  @override
+  void initState() {
+    super.initState();
+    loadTransactions();
+  }
 
-    TransactionData(
-      id: 2,
-      title: 'Xăng xe',
-      category: 'Di chuyển',
-      date: DateTime(2024, 9, 3),
-      amount: 100000,
-      type: 'expense',
-      icon: Icons.directions_car,
-      color: const Color(0xFF2196F3),
-    ),
+  // Lấy danh sách giao dịch từ SQLite
+  Future<void> loadTransactions() async {
+    final data = await DatabaseHelper.instance
+        .getTransactions();
 
-    TransactionData(
-      id: 3,
-      title: 'Lương tháng 9',
-      category: 'Thu nhập',
-      date: DateTime(2024, 9, 1),
-      amount: 8000000,
-      type: 'income',
-      icon: Icons.attach_money,
-      color: const Color(0xFF2EAD4B),
-    ),
+    if (!mounted) return;
 
-    TransactionData(
-      id: 4,
-      title: 'Mua sắm',
-      category: 'Mua sắm',
-      date: DateTime(2024, 8, 31),
-      amount: 300000,
-      type: 'expense',
-      icon: Icons.shopping_cart,
-      color: const Color(0xFF9C27B0),
-    ),
-
-    TransactionData(
-      id: 5,
-      title: 'Học phí',
-      category: 'Giáo dục',
-      date: DateTime(2024, 8, 30),
-      amount: 500000,
-      type: 'expense',
-      icon: Icons.school,
-      color: const Color(0xFF009688),
-    ),
-  ];
-
+    setState(() {
+      transactions = data
+          .map((item) => TransactionData.fromMap(item))
+          .toList();
+    });
+  }
 
   double get totalIncome {
     double total = 0;
@@ -255,7 +280,8 @@ class _HomePageState extends State<HomePage> {
 
 
   Future<void> addTransaction() async {
-    final TransactionData? result = await Navigator.push(
+    final TransactionData? result =
+    await Navigator.push<TransactionData>(
       context,
       MaterialPageRoute(
         builder: (_) => const TransactionFormPage(),
@@ -263,19 +289,53 @@ class _HomePageState extends State<HomePage> {
     );
 
     if (result != null) {
-      setState(() {
-        transactions.insert(0, result);
-      });
+      // Lưu giao dịch vào SQLite
+      await DatabaseHelper.instance
+          .insertTransaction(result.toMap());
+
+      // Đọc lại dữ liệu để cập nhật giao diện
+      await loadTransactions();
     }
   }
 
 
-  void deleteTransaction(int index) {
-    setState(() {
-      transactions.removeAt(index);
-    });
+
+
+  Future<void> deleteTransaction(int index) async {
+    // Lấy giao dịch cần xóa
+    final transaction = transactions[index];
+
+    // Xóa giao dịch trong SQLite theo ID
+    await DatabaseHelper.instance
+        .deleteTransaction(transaction.id);
+
+    // Đọc lại danh sách từ SQLite
+    await loadTransactions();
   }
 
+  Future<void> editTransaction(
+      TransactionData oldTransaction,
+      ) async {
+    final TransactionData? updated =
+    await Navigator.push<TransactionData>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TransactionFormPage(
+          transaction: oldTransaction,
+        ),
+      ),
+    );
+
+    if (updated != null) {
+      await DatabaseHelper.instance
+          .updateTransaction(
+        oldTransaction.id,
+        updated.toMap(),
+      );
+
+      await loadTransactions();
+    }
+  }
 
   Widget homeContent() {
     return SafeArea(
@@ -324,6 +384,7 @@ class _HomePageState extends State<HomePage> {
                   transactions: transactions,
                   formatMoney: formatMoney,
                   onDelete: deleteTransaction,
+                  onEdit: editTransaction,
                 ),
               ],
             ),
@@ -382,12 +443,13 @@ class _HomePageState extends State<HomePage> {
                   return const SizedBox(height: 8);
                 },
                 itemBuilder: (context, index) {
-                  return TransactionItem(
-                    transaction: transactions[index],
-                    formatMoney: formatMoney,
-                    onDelete: () {
-                      deleteTransaction(index);
-                    },
+                  return InkWell(
+                    onTap: () => editTransaction(transactions[index]),
+                    child: TransactionItem(
+                      transaction: transactions[index],
+                      formatMoney: formatMoney,
+                      onDelete: () => deleteTransaction(index),
+                    ),
                   );
                 },
               ),
@@ -939,12 +1001,14 @@ class TransactionList extends StatelessWidget {
   final List<TransactionData> transactions;
   final String Function(double) formatMoney;
   final Function(int) onDelete;
+  final ValueChanged<TransactionData> onEdit;
 
   const TransactionList({
     super.key,
     required this.transactions,
     required this.formatMoney,
     required this.onDelete,
+    required this.onEdit,
   });
 
   @override
@@ -970,12 +1034,13 @@ class TransactionList extends StatelessWidget {
           );
         },
         itemBuilder: (context, index) {
-          return TransactionItem(
-            transaction: transactions[index],
-            formatMoney: formatMoney,
-            onDelete: () {
-              onDelete(index);
-            },
+          return InkWell(
+            onTap: () => onEdit(transactions[index]),
+            child: TransactionItem(
+              transaction: transactions[index],
+              formatMoney: formatMoney,
+              onDelete: () => onDelete(index),
+            ),
           );
         },
       ),
@@ -1106,13 +1171,20 @@ class TransactionItem extends StatelessWidget {
 // FORM - KẾT HỢP BUỔI 3
 // =====================================================
 
+
 class TransactionFormPage extends StatefulWidget {
-  const TransactionFormPage({super.key});
+  final TransactionData? transaction;
+
+  const TransactionFormPage({
+    super.key,
+    this.transaction,
+  });
 
   @override
   State<TransactionFormPage> createState() =>
       _TransactionFormPageState();
 }
+
 
 class _TransactionFormPageState
     extends State<TransactionFormPage> {
@@ -1142,6 +1214,29 @@ class _TransactionFormPageState
     'Khác',
   ];
 
+  // BUỔI 5 - Hiển thị dữ liệu cũ khi sửa
+  @override
+  void initState() {
+    super.initState();
+
+    final transaction = widget.transaction;
+
+    if (transaction != null) {
+      titleController.text = transaction.title;
+
+      amountController.text =
+          transaction.amount.toStringAsFixed(0);
+
+      type = transaction.type;
+
+      category = transaction.type == 'income'
+          ? 'Ăn uống'
+          : transaction.category;
+
+      selectedDate = transaction.date;
+    }
+  }
+
   // ===================================================
   // CHỌN NGÀY
   // ===================================================
@@ -1155,7 +1250,7 @@ class _TransactionFormPageState
       lastDate: DateTime(2030),
     );
 
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         selectedDate = picked;
       });
@@ -1202,6 +1297,11 @@ class _TransactionFormPageState
           color = const Color(0xFF009688);
           break;
 
+        case 'Giải trí':
+          icon = Icons.sports_esports;
+          color = const Color(0xFFE91E63);
+          break;
+
         default:
           icon = Icons.receipt_long;
           color = const Color(0xFF607D8B);
@@ -1209,8 +1309,8 @@ class _TransactionFormPageState
     }
 
     final transaction = TransactionData(
-      id: DateTime.now()
-          .millisecondsSinceEpoch,
+      id: widget.transaction?.id ??
+          DateTime.now().millisecondsSinceEpoch,
       title: titleController.text.trim(),
       category: type == 'income'
           ? 'Thu nhập'
@@ -1243,9 +1343,9 @@ class _TransactionFormPageState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text(
-          'Thêm giao dịch',
-          style: TextStyle(
+        title: Text(
+          widget.transaction == null ? 'Thêm giao dịch' : 'Sửa giao dịch',
+          style: const TextStyle(
             fontWeight: FontWeight.bold,
           ),
         ),
@@ -1461,9 +1561,11 @@ class _TransactionFormPageState
                     BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text(
-                  'Lưu giao dịch',
-                  style: TextStyle(
+                child: Text(
+                  widget.transaction == null
+                      ? 'Lưu giao dịch'
+                      : 'Cập nhật giao dịch',
+                  style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.bold,
                   ),
